@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { CurrencyAmount, TradeType } from '@uniswap/sdk-core';
+import { CurrencyAmount, TradeType, Percent, Token } from '@uniswap/sdk-core';
 import { Pair, Route, Trade } from '@uniswap/v2-sdk';
-import { useAccount, useBalance } from 'wagmi';
+import { useAccount, useBalance, useWalletClient } from 'wagmi';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -27,19 +27,17 @@ import {
   tokenList,
   ExtendedToken,
   DEFAULT_NATIVE_ADDRESS,
+  WRAPPED_NATIVE_TOKEN,
 } from '../constants';
-import factoryAbi from '../abis/factory.json';
-import pairAbi from '../abis/pair.json';
-import routerAbi from '../abis/router.json';
 
 const MAX_INPUT_LENGTH = 25;
 
 const SwapCard: React.FC = () => {
   const { address, chainId } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const networkChainId = chainId ?? SEPOLIA_CHAIN_ID;
 
   const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
-  const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   const filteredTokens = useMemo(() => {
     return tokenList.filter((token) => token.chainId === networkChainId).map(createToken);
@@ -66,69 +64,64 @@ const SwapCard: React.FC = () => {
       const rpcUrl = networkChainId === MAINNET_CHAIN_ID ? MAINNET_RPC_URL : SEPOLIA_RPC_URL;
       const web3Provider = new ethers.providers.JsonRpcProvider(rpcUrl);
       setProvider(web3Provider);
-      setSigner(web3Provider.getSigner());
     };
     initProvider();
   }, [networkChainId]);
 
-  const calculateConversion = useCallback(
-    async (value: string): Promise<string> => {
-      if (!provider || !tokenPair[0] || !tokenPair[1] || !value || value === '0') return '0';
+  const getWETHAddress = (chainId: number): string => {
+    switch (chainId) {
+      case MAINNET_CHAIN_ID:
+        return WRAPPED_NATIVE_TOKEN[MAINNET_CHAIN_ID];
+      case SEPOLIA_CHAIN_ID:
+        return WRAPPED_NATIVE_TOKEN[SEPOLIA_CHAIN_ID];
+      default:
+        throw new Error(`Unsupported chain ID: ${chainId}`);
+    }
+  };
+
+  const calculateTrade = useCallback(
+    async (
+      inputAmount: string,
+    ): Promise<{ trade: Trade<Token, Token, TradeType.EXACT_INPUT>; formattedOutput: string } | null> => {
+      if (!provider || !tokenPair[0] || !tokenPair[1] || !inputAmount) return null;
 
       try {
-        const factoryAddress =
-          UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].factory;
-        console.log('Factory address:', factoryAddress);
+        const wethAddress = getWETHAddress(networkChainId);
+        const weth = new Token(networkChainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
+        const token0 = tokenPair[0].address === DEFAULT_NATIVE_ADDRESS ? weth : tokenPair[0];
+        const token1 = tokenPair[1].address === DEFAULT_NATIVE_ADDRESS ? weth : tokenPair[1];
 
-        const checksummedFactoryAddress = ethers.utils.getAddress(factoryAddress);
-        console.log('Checksummed factory address:', checksummedFactoryAddress);
+        const pairAddress = Pair.getAddress(token0, token1);
+        const pairContract = new ethers.Contract(
+          pairAddress,
+          [
+            'function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+          ],
+          provider,
+        );
+        const reserves = await pairContract.getReserves();
 
-        const factory = new ethers.Contract(checksummedFactoryAddress, factoryAbi, provider);
-
-        const token0Address =
-          tokenPair[0].address === DEFAULT_NATIVE_ADDRESS
-            ? UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].weth
-            : tokenPair[0].address;
-        const token1Address =
-          tokenPair[1].address === DEFAULT_NATIVE_ADDRESS
-            ? UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].weth
-            : tokenPair[1].address;
-
-        console.log('Token0 address:', token0Address);
-        console.log('Token1 address:', token1Address);
-
-        const pairAddress = await factory.getPair(token0Address, token1Address);
-        console.log('Pair address:', pairAddress);
-
-        if (pairAddress === ethers.constants.AddressZero) {
-          console.log('No liquidity pair found');
-        }
-
-        const pair = new ethers.Contract(pairAddress, pairAbi, provider);
-        const reserves = await pair.getReserves();
-        console.log('Reserves:', reserves.toString());
-
-        const [reserve0, reserve1] = tokenPair[0].sortsBefore(tokenPair[1])
-          ? [reserves[0], reserves[1]]
-          : [reserves[1], reserves[0]];
-
-        const inputAmount = CurrencyAmount.fromRawAmount(
-          tokenPair[0],
-          ethers.utils.parseUnits(value, tokenPair[0].decimals).toString(),
+        const pair = new Pair(
+          CurrencyAmount.fromRawAmount(token0, reserves[0].toString()),
+          CurrencyAmount.fromRawAmount(token1, reserves[1].toString()),
         );
 
-        const pair0 = new Pair(
-          CurrencyAmount.fromRawAmount(tokenPair[0], reserve0.toString()),
-          CurrencyAmount.fromRawAmount(tokenPair[1], reserve1.toString()),
+        const route = new Route([pair], token0, token1);
+        const amount = CurrencyAmount.fromRawAmount(
+          token0,
+          ethers.utils.parseUnits(inputAmount, token0.decimals).toString(),
         );
 
-        const route = new Route([pair0], tokenPair[0], tokenPair[1]);
-        const trade = new Trade(route, inputAmount, TradeType.EXACT_INPUT);
+        const trade = Trade.exactIn(route, amount);
+        const formattedOutput = ethers.utils.formatUnits(
+          trade.outputAmount.quotient.toString(),
+          trade.outputAmount.currency.decimals,
+        );
 
-        const outputAmount = trade.outputAmount;
-        return ethers.utils.formatUnits(outputAmount.quotient.toString(), tokenPair[1].decimals);
+        return { trade, formattedOutput };
       } catch (error) {
-        return '0';
+        console.error('Error calculating trade:', error);
+        return null;
       }
     },
     [provider, tokenPair, networkChainId],
@@ -143,17 +136,20 @@ const SwapCard: React.FC = () => {
       }
       setInputValues((prev) => [newValue, prev[1]]);
 
-      if (tokenPair[0] && tokenPair[1]) {
-        const convertedValue = await calculateConversion(newValue);
-        setInputValues([newValue, convertedValue]);
+      if (tokenPair[0] && tokenPair[1] && newValue !== '') {
+        const result = await calculateTrade(newValue);
+        if (result) {
+          setInputValues([newValue, result.formattedOutput]);
+        }
+      } else {
+        setInputValues([newValue, '']);
       }
     },
-    [maxBalance, tokenPair, calculateConversion],
+    [maxBalance, tokenPair, calculateTrade],
   );
 
   const handleMaxClick = () => {
-    const maxValue = maxBalance.toString();
-    handleInputChange(maxValue);
+    handleInputChange(maxBalance.toString());
   };
 
   const setToken = (index: 0 | 1, newToken: ExtendedToken) => {
@@ -171,31 +167,54 @@ const SwapCard: React.FC = () => {
   };
 
   const handleSwap = async () => {
-    if (!provider || !signer || !tokenPair[0] || !tokenPair[1]) return;
+    if (!tokenPair[0] || !tokenPair[1] || !inputValues[0]) return;
 
     try {
-      const routerAddress = UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].router;
-      const uniswapRouter = new ethers.Contract(routerAddress, routerAbi, signer);
+      if (!walletClient) throw new Error('Wallet client not found');
 
-      const inputAmount = ethers.utils.parseUnits(inputValues[0], tokenPair[0].decimals);
-      const path = [tokenPair[0].address, tokenPair[1].address];
-      const to = await signer.getAddress();
+      const ethersProvider = new ethers.providers.Web3Provider(walletClient.transport);
+      const ethersSigner = ethersProvider.getSigner();
+
+      const result = await calculateTrade(inputValues[0]);
+      if (!result) throw new Error('Failed to calculate trade');
+
+      const { trade } = result;
+
+      const routerAddress = UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].router;
+      const routerAbi = [
+        'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
+        'function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)',
+        'function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
+      ];
+      const router = new ethers.Contract(routerAddress, routerAbi, ethersSigner);
+
+      const slippageTolerance = new Percent(Math.floor(slippage * 100), '10000');
+      const amountOutMin = trade.minimumAmountOut(slippageTolerance);
+      const path = trade.route.path.map((token) => token.address);
+      const to = await ethersSigner.getAddress();
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
-      const amountOutMin = ethers.utils
-        .parseUnits(inputValues[1], tokenPair[1].decimals)
-        .mul(100 - Math.floor(slippage * 100))
-        .div(100);
-
       let tx;
-      if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
-        tx = await uniswapRouter.swapExactETHForTokens(amountOutMin, path, to, deadline, {
-          value: inputAmount,
+      if (trade.inputAmount.currency.isNative) {
+        tx = await router.swapExactETHForTokens(amountOutMin.quotient.toString(), path, to, deadline, {
+          value: trade.inputAmount.quotient.toString(),
         });
-      } else if (tokenPair[1].address === DEFAULT_NATIVE_ADDRESS) {
-        tx = await uniswapRouter.swapExactTokensForETH(inputAmount, amountOutMin, path, to, deadline);
+      } else if (trade.outputAmount.currency.isNative) {
+        tx = await router.swapExactTokensForETH(
+          trade.inputAmount.quotient.toString(),
+          amountOutMin.quotient.toString(),
+          path,
+          to,
+          deadline,
+        );
       } else {
-        tx = await uniswapRouter.swapExactTokensForTokens(inputAmount, amountOutMin, path, to, deadline);
+        tx = await router.swapExactTokensForTokens(
+          trade.inputAmount.quotient.toString(),
+          amountOutMin.quotient.toString(),
+          path,
+          to,
+          deadline,
+        );
       }
 
       await tx.wait();
@@ -209,13 +228,10 @@ const SwapCard: React.FC = () => {
   useEffect(() => {
     const updateConversion = async () => {
       if (tokenPair[0] && tokenPair[1] && inputValues[0]) {
-        const convertedValue = await calculateConversion(inputValues[0]);
-        setInputValues((prev) => {
-          if (prev[1] !== convertedValue) {
-            return [prev[0], convertedValue];
-          }
-          return prev;
-        });
+        const result = await calculateTrade(inputValues[0]);
+        if (result) {
+          setInputValues((prev) => [prev[0], result.formattedOutput]);
+        }
       } else {
         setInputValues((prev) => {
           if (prev[0] !== '' || prev[1] !== '') {
@@ -227,7 +243,7 @@ const SwapCard: React.FC = () => {
     };
 
     updateConversion();
-  }, [tokenPair, calculateConversion, inputValues[0]]);
+  }, [tokenPair, calculateTrade, inputValues[0]]);
 
   useEffect(() => {
     setInputValues(['', '']);
@@ -260,7 +276,11 @@ const SwapCard: React.FC = () => {
                     <Input
                       id={`token-input-${index}`}
                       type="number"
-                      value={inputValues[index]}
+                      value={
+                        index === 0
+                          ? inputValues[index]
+                          : Number(inputValues[index]).toFixed(tokenPair[1]?.decimals || 6)
+                      }
                       onChange={(e) => (index === 0 ? handleInputChange(e.target.value) : undefined)}
                       readOnly={index === 1}
                       className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-grow bg-black bg-opacity-10"

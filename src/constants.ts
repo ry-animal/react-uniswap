@@ -19,6 +19,8 @@ export const SEPOLIA_CHAIN_ID = 11155111;
 
 export const DEFAULT_NATIVE_ADDRESS = ethers.constants.AddressZero;
 
+const INFURA_API_KEY = '11c2e756461a4c9aae945e4a2fe66a4d';
+
 export const MAINNET_ETH: CustomToken = {
   name: 'Ethereum',
   symbol: 'ETH',
@@ -55,8 +57,8 @@ export const SEPOLIA_USDC: CustomToken = {
   logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.svg?v=032',
 };
 
-export const MAINNET_RPC_URL = 'https://eth.llamarpc.com/';
-export const SEPOLIA_RPC_URL = 'https://rpc.sepolia.org/';
+export const MAINNET_RPC_URL = `https://mainnet.infura.io/v3/${INFURA_API_KEY}`;
+export const SEPOLIA_RPC_URL = `https://sepolia.infura.io/v3/${INFURA_API_KEY}`;
 
 export const UNISWAP_V2_ADDRESSES = {
   mainnet: {
@@ -64,9 +66,14 @@ export const UNISWAP_V2_ADDRESSES = {
     router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
   },
   sepolia: {
-    factory: '0xC1eddf0DAb33B49A06a94136fc69D6D1FDF9F255',
-    router: '0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008',
+    factory: '0xB7f907f7A9eBC822a80BD25E224be42Ce0A698A0',
+    router: '0x425141165d3DE9FEC831896C016617a52363b687',
   },
+};
+
+export const WRAPPED_NATIVE_TOKEN = {
+  [MAINNET_CHAIN_ID]: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  [SEPOLIA_CHAIN_ID]: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14',
 };
 
 export const tokenList: CustomToken[] = [MAINNET_ETH, MAINNET_USDC, SEPOLIA_ETH, SEPOLIA_USDC];
@@ -84,5 +91,6 @@ export const SEPOLIA_USDC_TOKEN = createToken(SEPOLIA_USDC);
 export const MAINNET_SPOT_PRICE_STABLECOIN_AMOUNT = CurrencyAmount.fromRawAmount(MAINNET_USDC_TOKEN, 100_000e6);
 export const SEPOLIA_SPOT_PRICE_STABLECOIN_AMOUNT = CurrencyAmount.fromRawAmount(SEPOLIA_USDC_TOKEN, 10_000e6);
 
+export const MAX_INPUT_LENGTH = 25;
 export const DEFAULT_MS_BEFORE_WARNING = 600000;
 export const DEFAULT_RETRY_OPTIONS = { n: 10, minWait: 250, maxWait: 1000 };

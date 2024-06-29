@@ -10,14 +10,15 @@ const Landing = () => {
       </div>
 
       <div className="text-xs md:text-sm text-center text-white font-chakra pb-10">
-        Powered by{' '}
         <a
           href="
         https://uniswap.org/"
           target="_blank"
           rel="noreferrer"
         >
+          Powered by
           <img src="uniswap.svg" alt="Uniswap" className="inline-block size-8 mb-2" />
+          v2.
         </a>
       </div>
 
