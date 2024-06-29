@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ethers, Contract } from 'ethers';
+import { ethers } from 'ethers';
 import { CurrencyAmount, TradeType } from '@uniswap/sdk-core';
 import { Pair, Route, Trade } from '@uniswap/v2-sdk';
 import { useAccount, useBalance } from 'wagmi';
@@ -30,7 +30,7 @@ import {
 } from '../constants';
 import factoryAbi from '../abis/factory.json';
 import pairAbi from '../abis/pair.json';
-import router from '../abis/router.json';
+import routerAbi from '../abis/router.json';
 
 const MAX_INPUT_LENGTH = 25;
 
@@ -78,39 +78,36 @@ const SwapCard: React.FC = () => {
       try {
         const factoryAddress =
           UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].factory;
-        const factory = new Contract(factoryAddress, factoryAbi, provider);
+        const factory = new ethers.Contract(factoryAddress, factoryAbi, provider);
 
-        const token0 = tokenPair[0].address === DEFAULT_NATIVE_ADDRESS ? tokenPair[0] : tokenPair[0];
-        const token1 = tokenPair[1].address === DEFAULT_NATIVE_ADDRESS ? tokenPair[1] : tokenPair[1];
-
-        const pairAddress = await factory.getPair(token0.address, token1.address);
+        const pairAddress = await factory.getPair(tokenPair[0].address, tokenPair[1].address);
         if (pairAddress === ethers.constants.AddressZero) {
           console.log('No liquidity pair found');
           return '0';
         }
 
-        const pair = new Contract(pairAddress, pairAbi, provider);
+        const pair = new ethers.Contract(pairAddress, pairAbi, provider);
         const reserves = await pair.getReserves();
 
-        const [reserve0, reserve1] = token0.sortsBefore(token1)
+        const [reserve0, reserve1] = tokenPair[0].sortsBefore(tokenPair[1])
           ? [reserves[0], reserves[1]]
           : [reserves[1], reserves[0]];
 
         const inputAmount = CurrencyAmount.fromRawAmount(
-          token0,
-          ethers.utils.parseUnits(value, token0.decimals).toString(),
+          tokenPair[0],
+          ethers.utils.parseUnits(value, tokenPair[0].decimals).toString(),
         );
 
         const pair0 = new Pair(
-          CurrencyAmount.fromRawAmount(token0, reserve0.toString()),
-          CurrencyAmount.fromRawAmount(token1, reserve1.toString()),
+          CurrencyAmount.fromRawAmount(tokenPair[0], reserve0.toString()),
+          CurrencyAmount.fromRawAmount(tokenPair[1], reserve1.toString()),
         );
 
-        const route = new Route([pair0], token0, token1);
+        const route = new Route([pair0], tokenPair[0], tokenPair[1]);
         const trade = new Trade(route, inputAmount, TradeType.EXACT_INPUT);
 
         const outputAmount = trade.outputAmount;
-        return ethers.utils.formatUnits(outputAmount.quotient.toString(), token1.decimals);
+        return ethers.utils.formatUnits(outputAmount.quotient.toString(), tokenPair[1].decimals);
       } catch (error) {
         console.error('Error calculating conversion:', error);
         return '0';
@@ -160,7 +157,7 @@ const SwapCard: React.FC = () => {
 
     try {
       const routerAddress = UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].router;
-      const uniswapRouter = new ethers.Contract(routerAddress, router, signer);
+      const uniswapRouter = new ethers.Contract(routerAddress, routerAbi, signer);
 
       const inputAmount = ethers.utils.parseUnits(inputValues[0], tokenPair[0].decimals);
       const path = [tokenPair[0].address, tokenPair[1].address];
