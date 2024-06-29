@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { Token, Fetcher, Route, Trade, TokenAmount, TradeType, Percent, WETH, ChainId } from '@uniswap/sdk';
+import { Token as UniswapToken, Fetcher, Route, Trade, TokenAmount, TradeType, Percent, WETH } from '@uniswap/sdk';
 import { useAccount, useBalance } from 'wagmi';
 import { sepolia } from 'viem/chains';
 import { Card, CardContent } from './ui/card';
@@ -17,67 +17,25 @@ import {
 } from './ui/dropdown-menu';
 import { CoinsIcon } from 'lucide-react';
 import { formatBalance } from '../lib/utils';
-import { addresses, tokenList } from '../constants';
+import { addresses, tokenList, Token } from '../constants';
 import router from '../abis/router.json';
 
 const UNISWAP_ROUTER_ADDRESS = addresses.uniswapV2Router;
 const UNISWAP_ROUTER_ABI = router;
 
-interface CustomTokenProps {
-  logoURI?: string;
-}
+type ExtendedToken = UniswapToken & { logoURI?: string };
 
-type ExtendedToken = Token & CustomTokenProps;
-
-type TokenListItem = {
-  chainId: number;
-  address: string;
-  decimals: number;
-  symbol: string;
-  name: string;
-  logoURI?: string;
-};
-
-const createExtendedToken = (
-  chainId: number,
-  address: string,
-  decimals: number,
-  symbol: string,
-  name: string,
-  logoURI?: string,
-): ExtendedToken => {
-  return Object.assign(new Token(chainId, address, decimals, symbol, name), { logoURI });
-};
-
-const toExtendedToken = (token: TokenListItem): ExtendedToken | null => {
-  if (token.symbol === 'ETH') {
-    return createExtendedToken(
+const createExtendedToken = (token: Token): ExtendedToken => {
+  return Object.assign(
+    new UniswapToken(
       token.chainId,
-      getWETHAddress(token.chainId),
+      token.address || ethers.constants.AddressZero,
       token.decimals,
       token.symbol,
       token.name,
-      token.logoURI,
-    );
-  }
-
-  if (!ethers.utils.isAddress(token.address)) {
-    console.error(`Invalid address for token:`, token);
-    return null;
-  }
-
-  return createExtendedToken(token.chainId, token.address, token.decimals, token.symbol, token.name, token.logoURI);
-};
-
-const getWETHAddress = (chainId: number): string => {
-  switch (chainId) {
-    case ChainId.MAINNET:
-      return WETH[ChainId.MAINNET].address;
-    case 11155111: // Sepolia testnet
-      return '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14'; // WETH address on Sepolia
-    default:
-      throw new Error(`WETH address not available for chain ID ${chainId}`);
-  }
+    ),
+    { logoURI: token.logoURI },
+  );
 };
 
 const useWeb3Provider = () => {
@@ -98,17 +56,23 @@ const useWeb3Provider = () => {
   return { provider, signer };
 };
 
+const useTokenBalance = (token: ExtendedToken | null) => {
+  const account = useAccount();
+  return useBalance({
+    address: account.address,
+    token: token?.symbol === 'ETH' ? undefined : (token?.address as `0x${string}`),
+    chainId: token?.chainId,
+  });
+};
+
 const SwapCard: React.FC = () => {
   const MAX_INPUT_LENGTH = 25;
   const account = useAccount();
   const { provider, signer } = useWeb3Provider();
 
   const filteredTokens = useMemo(() => {
-    const chainId = account?.chainId ?? sepolia.id;
-    return tokenList
-      .filter((token) => token.chainId === chainId)
-      .map(toExtendedToken)
-      .filter((token): token is ExtendedToken => token !== null);
+    const chainId = account.chainId ?? sepolia.id;
+    return tokenList.filter((token) => token.chainId === chainId).map(createExtendedToken);
   }, [account.chainId]);
 
   const [tokenPair, setTokenPair] = useState<[ExtendedToken | null, ExtendedToken | null]>(() => {
@@ -119,27 +83,17 @@ const SwapCard: React.FC = () => {
   const [inputValues, setInputValues] = useState<[string, string]>(['', '']);
   const [slippage, setSlippage] = useState<number>(0.5);
 
-  const balance = useBalance({
-    address: account.address,
-    token: tokenPair[0]?.address as `0x${string}`,
-    chainId: tokenPair[0]?.chainId,
-  });
+  const tokenBalance = useTokenBalance(tokenPair[0]);
 
-  const maxBalance = balance.data?.formatted ? Number(balance.data.formatted) : 0;
+  const maxBalance = tokenBalance.data?.formatted ? Number(tokenBalance.data.formatted) : 0;
 
   const calculateConversion = useCallback(
     async (value: string): Promise<string> => {
       if (!provider || !tokenPair[0] || !tokenPair[1] || !value || value === '0') return '0';
 
       try {
-        const inputToken =
-          tokenPair[0].symbol === 'ETH'
-            ? new Token(tokenPair[0].chainId, getWETHAddress(tokenPair[0].chainId), 18, 'WETH', 'Wrapped Ether')
-            : tokenPair[0];
-        const outputToken =
-          tokenPair[1].symbol === 'ETH'
-            ? new Token(tokenPair[1].chainId, getWETHAddress(tokenPair[1].chainId), 18, 'WETH', 'Wrapped Ether')
-            : tokenPair[1];
+        const inputToken = tokenPair[0].symbol === 'ETH' ? WETH[tokenPair[0].chainId] : tokenPair[0];
+        const outputToken = tokenPair[1].symbol === 'ETH' ? WETH[tokenPair[1].chainId] : tokenPair[1];
 
         const pair = await Fetcher.fetchPairData(inputToken, outputToken, provider);
         const route = new Route([pair], inputToken);
@@ -192,20 +146,15 @@ const SwapCard: React.FC = () => {
       }
       return newPair;
     });
+    setInputValues(['', '']);
   };
 
   const handleSwap = async () => {
     if (!provider || !signer || !tokenPair[0] || !tokenPair[1]) return;
 
     try {
-      const inputToken =
-        tokenPair[0].symbol === 'ETH'
-          ? new Token(tokenPair[0].chainId, getWETHAddress(tokenPair[0].chainId), 18, 'WETH', 'Wrapped Ether')
-          : tokenPair[0];
-      const outputToken =
-        tokenPair[1].symbol === 'ETH'
-          ? new Token(tokenPair[1].chainId, getWETHAddress(tokenPair[1].chainId), 18, 'WETH', 'Wrapped Ether')
-          : tokenPair[1];
+      const inputToken = tokenPair[0].symbol === 'ETH' ? WETH[tokenPair[0].chainId] : tokenPair[0];
+      const outputToken = tokenPair[1].symbol === 'ETH' ? WETH[tokenPair[1].chainId] : tokenPair[1];
 
       const pair = await Fetcher.fetchPairData(inputToken, outputToken, provider);
       const route = new Route([pair], inputToken);
@@ -235,6 +184,7 @@ const SwapCard: React.FC = () => {
 
       await tx.wait();
       console.log('Swap successful!');
+      setInputValues(['', '']);
     } catch (error) {
       console.error('Swap failed:', error);
     }
@@ -263,6 +213,14 @@ const SwapCard: React.FC = () => {
     updateConversion();
   }, [tokenPair, calculateConversion, inputValues[0]]);
 
+  useEffect(() => {
+    setInputValues(['', '']);
+    setTokenPair(() => {
+      const validTokens = filteredTokens.slice(0, 2);
+      return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
+    });
+  }, [account.address, account.chainId, filteredTokens]);
+
   if (filteredTokens.length < 2) {
     return <div>Loading tokens... (Found {filteredTokens.length} tokens)</div>;
   }
@@ -275,7 +233,7 @@ const SwapCard: React.FC = () => {
             <div key={index} className="flex flex-col gap-2">
               <Label htmlFor={`token-input-${index}`}>
                 {index === 0
-                  ? `Available: ${balance.data?.formatted ? formatBalance(Number(balance.data.formatted)) : '0'} ${tokenPair[0]?.symbol || ''}`
+                  ? `Available: ${tokenBalance.data?.formatted ? formatBalance(Number(tokenBalance.data.formatted)) : '0'} ${tokenPair[0]?.symbol || ''}`
                   : `${tokenPair[1]?.symbol || ''} to receive:`}
               </Label>
               <div className="flex gap-4">
