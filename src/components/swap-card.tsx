@@ -3,10 +3,10 @@ import { ethers } from 'ethers';
 import { Token, Fetcher, Route, Trade, TokenAmount, TradeType, Percent, WETH, ChainId } from '@uniswap/sdk';
 import { useAccount, useBalance } from 'wagmi';
 import { sepolia } from 'viem/chains';
-import { Card, CardContent } from '../components/ui/card';
-import { Input } from '../components/ui/input';
-import { Button } from '../components/ui/button';
-import { Label } from '../components/ui/label';
+import { Card, CardContent } from './ui/card';
+import { Input } from './ui/input';
+import { Button } from './ui/button';
+import { Label } from './ui/label';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +14,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../components/ui/dropdown-menu';
+} from './ui/dropdown-menu';
 import { CoinsIcon } from 'lucide-react';
 import { formatBalance } from '../lib/utils';
 import { addresses, tokenList } from '../constants';
