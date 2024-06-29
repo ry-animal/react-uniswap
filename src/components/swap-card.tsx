@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { ethers } from 'ethers';
-import { Token as UniswapToken, Fetcher, Route, Trade, TokenAmount, TradeType, Percent, WETH } from '@uniswap/sdk';
+import { ethers, Contract } from 'ethers';
+import { ChainId, Token, WETH, Fetcher, Route, Trade, TokenAmount, TradeType, Percent } from '@uniswap/sdk';
 import { useAccount, useBalance } from 'wagmi';
 import { sepolia } from 'viem/chains';
 import { Card, CardContent } from './ui/card';
@@ -17,23 +17,32 @@ import {
 } from './ui/dropdown-menu';
 import { CoinsIcon } from 'lucide-react';
 import { formatBalance } from '../lib/utils';
-import { addresses, tokenList, Token } from '../constants';
+import { addresses, tokenList, Token as CustomToken } from '../constants';
 import router from '../abis/router.json';
+import IUniswapV2Factory from '@uniswap/v2-core/build/IUniswapV2Factory.json';
+import IUniswapV2Pair from '@uniswap/v2-core/build/IUniswapV2Pair.json';
 
-const UNISWAP_ROUTER_ADDRESS = addresses.uniswapV2Router;
 const UNISWAP_ROUTER_ABI = router;
 
-type ExtendedToken = UniswapToken & { logoURI?: string };
+type ExtendedChainId = ChainId | 11155111;
 
-const createExtendedToken = (token: Token): ExtendedToken => {
+type WETHAddresses = {
+  [key in ExtendedChainId]: string;
+};
+
+const WETH_ADDRESSES: WETHAddresses = {
+  ...WETH,
+  [11155111]: '0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9',
+};
+
+type ExtendedToken = Token & {
+  logoURI?: string;
+  chainId: ExtendedChainId;
+};
+
+const createExtendedToken = (token: CustomToken): ExtendedToken => {
   return Object.assign(
-    new UniswapToken(
-      token.chainId,
-      token.address || ethers.constants.AddressZero,
-      token.decimals,
-      token.symbol,
-      token.name,
-    ),
+    new Token(token.chainId, token.address || ethers.constants.AddressZero, token.decimals, token.symbol, token.name),
     { logoURI: token.logoURI },
   );
 };
@@ -65,6 +74,13 @@ const useTokenBalance = (token: ExtendedToken | null) => {
   });
 };
 
+const getTokenAddress = (token: ExtendedToken, chainId: ExtendedChainId): string => {
+  if (token.symbol === 'ETH') {
+    return WETH_ADDRESSES[chainId] || token.address;
+  }
+  return token.address;
+};
+
 const SwapCard: React.FC = () => {
   const MAX_INPUT_LENGTH = 25;
   const account = useAccount();
@@ -92,22 +108,65 @@ const SwapCard: React.FC = () => {
       if (!provider || !tokenPair[0] || !tokenPair[1] || !value || value === '0') return '0';
 
       try {
-        const inputToken = tokenPair[0].symbol === 'ETH' ? WETH[tokenPair[0].chainId] : tokenPair[0];
-        const outputToken = tokenPair[1].symbol === 'ETH' ? WETH[tokenPair[1].chainId] : tokenPair[1];
+        const inputToken = tokenPair[0];
+        const outputToken = tokenPair[1];
 
-        const pair = await Fetcher.fetchPairData(inputToken, outputToken, provider);
-        const route = new Route([pair], inputToken);
+        const chainId = (account.chainId ?? 11155111) as ExtendedChainId;
+        const customProvider = new ethers.providers.JsonRpcProvider(
+          chainId === ChainId.MAINNET ? addresses.quickNodeMainnet : addresses.quickNodeSepolia,
+        );
+
+        console.log(`Calculating conversion for ${inputToken.symbol} to ${outputToken.symbol} on chain ${chainId}`);
+
+        const inputTokenAddress = getTokenAddress(inputToken, chainId);
+        const outputTokenAddress = getTokenAddress(outputToken, chainId);
+
+        console.log(`Input token address: ${inputTokenAddress}`);
+        console.log(`Output token address: ${outputTokenAddress}`);
+
+        const factoryAddress =
+          chainId === ChainId.MAINNET ? addresses.mainnetUniswapV2Factory : addresses.sepoliaUniswapV2Factory;
+        console.log(`Using factory address: ${factoryAddress}`);
+
+        const factory = new Contract(factoryAddress, IUniswapV2Factory.abi, customProvider);
+
+        const pairAddress = await factory.getPair(inputTokenAddress, outputTokenAddress);
+        console.log(`Pair address: ${pairAddress}`);
+
+        if (pairAddress === ethers.constants.AddressZero) {
+          console.log('No liquidity pair found');
+          return '0';
+        }
+
+        const pair = new Contract(pairAddress, IUniswapV2Pair.abi, customProvider);
+        const reserves = await pair.getReserves();
+        console.log(`Reserves: ${reserves[0].toString()}, ${reserves[1].toString()}`);
+
+        const [reserve0, reserve1] =
+          inputTokenAddress.toLowerCase() < outputTokenAddress.toLowerCase()
+            ? [reserves[0], reserves[1]]
+            : [reserves[1], reserves[0]];
+
         const amountIn = ethers.utils.parseUnits(value, inputToken.decimals);
+        const amountInWithFee = amountIn.mul(997);
+        const numerator = amountInWithFee.mul(reserve1);
+        const denominator = reserve0.mul(1000).add(amountInWithFee);
+        const amountOut = numerator.div(denominator);
 
-        const trade = new Trade(route, new TokenAmount(inputToken, amountIn.toString()), TradeType.EXACT_INPUT);
+        const formattedAmountOut = ethers.utils.formatUnits(amountOut, outputToken.decimals);
+        console.log(`Calculated output amount: ${formattedAmountOut}`);
 
-        return trade.outputAmount.toSignificant(6);
+        return formattedAmountOut;
       } catch (error) {
         console.error('Error calculating conversion:', error);
+        if (error instanceof Error) {
+          console.error('Error name:', error.name);
+          console.error('Error message:', error.message);
+        }
         return '0';
       }
     },
-    [provider, tokenPair],
+    [provider, tokenPair, account.chainId],
   );
 
   const handleInputChange = useCallback(
@@ -153,10 +212,22 @@ const SwapCard: React.FC = () => {
     if (!provider || !signer || !tokenPair[0] || !tokenPair[1]) return;
 
     try {
-      const inputToken = tokenPair[0].symbol === 'ETH' ? WETH[tokenPair[0].chainId] : tokenPair[0];
-      const outputToken = tokenPair[1].symbol === 'ETH' ? WETH[tokenPair[1].chainId] : tokenPair[1];
+      const inputToken = tokenPair[0];
+      const outputToken = tokenPair[1];
 
-      const pair = await Fetcher.fetchPairData(inputToken, outputToken, provider);
+      const chainId = (account.chainId ?? 11155111) as ExtendedChainId;
+      const customProvider = new ethers.providers.JsonRpcProvider(
+        chainId === ChainId.MAINNET ? addresses.quickNodeMainnet : addresses.quickNodeSepolia,
+      );
+
+      const inputTokenAddress = getTokenAddress(inputToken, chainId);
+      const outputTokenAddress = getTokenAddress(outputToken, chainId);
+
+      const pair = await Fetcher.fetchPairData(
+        new Token(account.chainId ?? ChainId.MAINNET, inputTokenAddress, inputToken.decimals),
+        new Token(account.chainId ?? ChainId.MAINNET, outputTokenAddress, outputToken.decimals),
+        customProvider,
+      );
       const route = new Route([pair], inputToken);
       const amountIn = ethers.utils.parseUnits(inputValues[0], inputToken.decimals);
 
@@ -167,16 +238,18 @@ const SwapCard: React.FC = () => {
       const slippageTolerance = new Percent(slippageNumerator, slippageDenominator);
 
       const amountOutMin = trade.minimumAmountOut(slippageTolerance).raw.toString();
-      const path = [inputToken.address, outputToken.address];
+      const path = [inputTokenAddress, outputTokenAddress];
       const to = await signer.getAddress();
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
-      const uniswapRouter = new ethers.Contract(UNISWAP_ROUTER_ADDRESS, UNISWAP_ROUTER_ABI, signer);
+      const routerAddress =
+        chainId === ChainId.MAINNET ? addresses.mainnetUniswapV2Router : addresses.sepoliaUniswapV2Router;
+      const uniswapRouter = new ethers.Contract(routerAddress, UNISWAP_ROUTER_ABI, signer);
 
       let tx;
-      if (tokenPair[0].symbol === 'ETH') {
+      if (inputToken.symbol === 'ETH') {
         tx = await uniswapRouter.swapExactETHForTokens(amountOutMin, path, to, deadline, { value: amountIn });
-      } else if (tokenPair[1].symbol === 'ETH') {
+      } else if (outputToken.symbol === 'ETH') {
         tx = await uniswapRouter.swapExactTokensForETH(amountIn, amountOutMin, path, to, deadline);
       } else {
         tx = await uniswapRouter.swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline);
