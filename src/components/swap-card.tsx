@@ -51,7 +51,14 @@ const createExtendedToken = (
 
 const toExtendedToken = (token: TokenListItem): ExtendedToken | null => {
   if (token.symbol === 'ETH') {
-    return createExtendedToken(token.chainId, '', token.decimals, token.symbol, token.name, token.logoURI);
+    return createExtendedToken(
+      token.chainId,
+      getWETHAddress(token.chainId),
+      token.decimals,
+      token.symbol,
+      token.name,
+      token.logoURI,
+    );
   }
 
   if (!ethers.utils.isAddress(token.address)) {
@@ -66,8 +73,8 @@ const getWETHAddress = (chainId: number): string => {
   switch (chainId) {
     case ChainId.MAINNET:
       return WETH[ChainId.MAINNET].address;
-    case 11155111:
-      return '';
+    case 11155111: // Sepolia testnet
+      return '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14'; // WETH address on Sepolia
     default:
       throw new Error(`WETH address not available for chain ID ${chainId}`);
   }
@@ -237,14 +244,24 @@ const SwapCard: React.FC = () => {
     const updateConversion = async () => {
       if (tokenPair[0] && tokenPair[1] && inputValues[0]) {
         const convertedValue = await calculateConversion(inputValues[0]);
-        setInputValues((prev) => [prev[0], convertedValue]);
+        setInputValues((prev) => {
+          if (prev[1] !== convertedValue) {
+            return [prev[0], convertedValue];
+          }
+          return prev;
+        });
       } else {
-        setInputValues(['', '']);
+        setInputValues((prev) => {
+          if (prev[0] !== '' || prev[1] !== '') {
+            return ['', ''];
+          }
+          return prev;
+        });
       }
     };
 
     updateConversion();
-  }, [tokenPair, calculateConversion, inputValues]);
+  }, [tokenPair, calculateConversion, inputValues[0]]);
 
   if (filteredTokens.length < 2) {
     return <div>Loading tokens... (Found {filteredTokens.length} tokens)</div>;
@@ -259,7 +276,7 @@ const SwapCard: React.FC = () => {
               <Label htmlFor={`token-input-${index}`}>
                 {index === 0
                   ? `Available: ${balance.data?.formatted ? formatBalance(Number(balance.data.formatted)) : '0'} ${tokenPair[0]?.symbol || ''}`
-                  : `You receive ${tokenPair[1]?.symbol || ''}`}
+                  : `${tokenPair[1]?.symbol || ''} to receive:`}
               </Label>
               <div className="flex gap-4">
                 <div className="flex flex-col gap-4 w-full">
@@ -308,8 +325,8 @@ const SwapCard: React.FC = () => {
             </div>
           ))}
         </div>
-        <div className="flex flex-col gap2 mt-">
-          <Label htmlFor="slippage">Slippage tolerance</Label>
+        <div className="flex flex-col gap-2 mt-8">
+          <Label htmlFor="slippage">Slippage tolerance: </Label>
           <Input
             type="number"
             placeholder="Slippage (%)"
