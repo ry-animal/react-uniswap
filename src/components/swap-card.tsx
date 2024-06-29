@@ -78,16 +78,35 @@ const SwapCard: React.FC = () => {
       try {
         const factoryAddress =
           UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].factory;
-        const factory = new ethers.Contract(factoryAddress, factoryAbi, provider);
+        console.log('Factory address:', factoryAddress);
 
-        const pairAddress = await factory.getPair(tokenPair[0].address, tokenPair[1].address);
+        const checksummedFactoryAddress = ethers.utils.getAddress(factoryAddress);
+        console.log('Checksummed factory address:', checksummedFactoryAddress);
+
+        const factory = new ethers.Contract(checksummedFactoryAddress, factoryAbi, provider);
+
+        const token0Address =
+          tokenPair[0].address === DEFAULT_NATIVE_ADDRESS
+            ? UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].weth
+            : tokenPair[0].address;
+        const token1Address =
+          tokenPair[1].address === DEFAULT_NATIVE_ADDRESS
+            ? UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].weth
+            : tokenPair[1].address;
+
+        console.log('Token0 address:', token0Address);
+        console.log('Token1 address:', token1Address);
+
+        const pairAddress = await factory.getPair(token0Address, token1Address);
+        console.log('Pair address:', pairAddress);
+
         if (pairAddress === ethers.constants.AddressZero) {
           console.log('No liquidity pair found');
-          return '0';
         }
 
         const pair = new ethers.Contract(pairAddress, pairAbi, provider);
         const reserves = await pair.getReserves();
+        console.log('Reserves:', reserves.toString());
 
         const [reserve0, reserve1] = tokenPair[0].sortsBefore(tokenPair[1])
           ? [reserves[0], reserves[1]]
@@ -109,7 +128,6 @@ const SwapCard: React.FC = () => {
         const outputAmount = trade.outputAmount;
         return ethers.utils.formatUnits(outputAmount.quotient.toString(), tokenPair[1].decimals);
       } catch (error) {
-        console.error('Error calculating conversion:', error);
         return '0';
       }
     },
