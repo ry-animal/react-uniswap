@@ -4,9 +4,10 @@ import { darkTheme, RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { WagmiProvider } from 'wagmi';
 import AppLayout from './layouts/app-layout';
 import Landing from './pages/landing';
+import { config } from './lib/config';
 //import Widget from './pages/widget';
 import '@rainbow-me/rainbowkit/styles.css';
-import { config } from './lib/config';
+import './index.css';
 
 const router = createBrowserRouter([
   {
