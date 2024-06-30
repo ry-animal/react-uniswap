@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { CurrencyAmount, TradeType, Percent, Token } from '@uniswap/sdk-core';
-import { Pair, Route, Trade } from '@uniswap/v2-sdk';
+import JSBI from 'jsbi';
+import { Token, Percent } from '@uniswap/sdk-core';
+import { Pair } from '@uniswap/v2-sdk';
 import { useAccount, useBalance, useWalletClient } from 'wagmi';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
@@ -38,6 +39,8 @@ const SwapCard: React.FC = () => {
   const networkChainId = chainId ?? SEPOLIA_CHAIN_ID;
 
   const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const filteredTokens = useMemo(() => {
     return tokenList.filter((token) => token.chainId === networkChainId).map(createToken);
@@ -80,12 +83,11 @@ const SwapCard: React.FC = () => {
   };
 
   const calculateTrade = useCallback(
-    async (
-      inputAmount: string,
-    ): Promise<{ trade: Trade<Token, Token, TradeType.EXACT_INPUT>; formattedOutput: string } | null> => {
+    async (inputAmount: string): Promise<{ formattedOutput: string } | null> => {
       if (!provider || !tokenPair[0] || !tokenPair[1] || !inputAmount) return null;
 
       try {
+        setError(null);
         const wethAddress = getWETHAddress(networkChainId);
         const weth = new Token(networkChainId, wethAddress, 18, 'WETH', 'Wrapped Ether');
         const token0 = tokenPair[0].address === DEFAULT_NATIVE_ADDRESS ? weth : tokenPair[0];
@@ -99,28 +101,41 @@ const SwapCard: React.FC = () => {
           ],
           provider,
         );
-        const reserves = await pairContract.getReserves();
 
-        const pair = new Pair(
-          CurrencyAmount.fromRawAmount(token0, reserves[0].toString()),
-          CurrencyAmount.fromRawAmount(token1, reserves[1].toString()),
+        let reserves;
+        try {
+          reserves = await pairContract.getReserves();
+        } catch (error) {
+          setError(`No liquidity pair found for ${token0.symbol}/${token1.symbol} on ${networkChainId === MAINNET_CHAIN_ID ? 'Mainnet' : 'Sepolia'}. 
+                    This pair may not exist or have liquidity on this network.`);
+          return null;
+        }
+
+        if (reserves[0].isZero() && reserves[1].isZero()) {
+          setError(`Liquidity pair exists for ${token0.symbol}/${token1.symbol}, but it has no liquidity. 
+                    You may need to add liquidity to this pair before swapping.`);
+          return null;
+        }
+
+        const [reserve0, reserve1] = token0.sortsBefore(token1)
+          ? [reserves[0], reserves[1]]
+          : [reserves[1], reserves[0]];
+
+        const inputAmountWithFee = ethers.BigNumber.from(ethers.utils.parseUnits(inputAmount, token0.decimals)).mul(
+          997,
         );
+        const numerator = inputAmountWithFee.mul(reserve1);
+        const denominator = reserve0.mul(1000).add(inputAmountWithFee);
+        const outputAmount = numerator.div(denominator);
 
-        const route = new Route([pair], token0, token1);
-        const amount = CurrencyAmount.fromRawAmount(
-          token0,
-          ethers.utils.parseUnits(inputAmount, token0.decimals).toString(),
-        );
+        const formattedOutput = ethers.utils.formatUnits(outputAmount, token1.decimals);
 
-        const trade = Trade.exactIn(route, amount);
-        const formattedOutput = ethers.utils.formatUnits(
-          trade.outputAmount.quotient.toString(),
-          trade.outputAmount.currency.decimals,
-        );
-
-        return { trade, formattedOutput };
+        return { formattedOutput };
       } catch (error) {
         console.error('Error calculating trade:', error);
+        setError(`An error occurred while calculating the trade. 
+                  This could be due to network issues or lack of liquidity. 
+                  Please try again or try a different token pair.`);
         return null;
       }
     },
@@ -148,9 +163,9 @@ const SwapCard: React.FC = () => {
     [maxBalance, tokenPair, calculateTrade],
   );
 
-  const handleMaxClick = () => {
+  const handleMaxClick = useCallback(() => {
     handleInputChange(maxBalance.toString());
-  };
+  }, [handleInputChange, maxBalance]);
 
   const setToken = (index: 0 | 1, newToken: ExtendedToken) => {
     setTokenPair((prevPair) => {
@@ -164,11 +179,14 @@ const SwapCard: React.FC = () => {
       return newPair;
     });
     setInputValues(['', '']);
+    setError(null);
   };
 
   const handleSwap = async () => {
-    if (!tokenPair[0] || !tokenPair[1] || !inputValues[0]) return;
+    if (!tokenPair[0] || !tokenPair[1] || !inputValues[0] || isSwapping) return;
 
+    setIsSwapping(true);
+    setError(null);
     try {
       if (!walletClient) throw new Error('Wallet client not found');
 
@@ -178,8 +196,6 @@ const SwapCard: React.FC = () => {
       const result = await calculateTrade(inputValues[0]);
       if (!result) throw new Error('Failed to calculate trade');
 
-      const { trade } = result;
-
       const routerAddress = UNISWAP_V2_ADDRESSES[networkChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'sepolia'].router;
       const routerAbi = [
         'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
@@ -188,33 +204,34 @@ const SwapCard: React.FC = () => {
       ];
       const router = new ethers.Contract(routerAddress, routerAbi, ethersSigner);
 
-      const slippageTolerance = new Percent(Math.floor(slippage * 100), '10000');
-      const amountOutMin = trade.minimumAmountOut(slippageTolerance);
-      const path = trade.route.path.map((token) => token.address);
+      const slippageTolerance = new Percent(JSBI.BigInt(Math.floor(slippage * 10000)), JSBI.BigInt(10000));
+
+      const amountIn = ethers.utils.parseUnits(inputValues[0], tokenPair[0].decimals);
+      const amountOut = ethers.utils.parseUnits(result.formattedOutput, tokenPair[1].decimals);
+
+      const slippageNumerator = slippageTolerance.numerator.toString();
+      const slippageDenominator = slippageTolerance.denominator.toString();
+
+      const slippageAmount = amountOut.mul(slippageNumerator).div(slippageDenominator);
+      const amountOutMin = amountOut.sub(slippageAmount);
+
+      console.log(`Amount In: ${ethers.utils.formatUnits(amountIn, tokenPair[0].decimals)}`);
+      console.log(`Amount Out: ${ethers.utils.formatUnits(amountOut, tokenPair[1].decimals)}`);
+      console.log(`Amount Out Min: ${ethers.utils.formatUnits(amountOutMin, tokenPair[1].decimals)}`);
+
+      const path = [tokenPair[0].address, tokenPair[1].address];
       const to = await ethersSigner.getAddress();
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
       let tx;
-      if (trade.inputAmount.currency.isNative) {
-        tx = await router.swapExactETHForTokens(amountOutMin.quotient.toString(), path, to, deadline, {
-          value: trade.inputAmount.quotient.toString(),
+      if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
+        tx = await router.swapExactETHForTokens(amountOutMin.toString(), path, to, deadline, {
+          value: amountIn.toString(),
         });
-      } else if (trade.outputAmount.currency.isNative) {
-        tx = await router.swapExactTokensForETH(
-          trade.inputAmount.quotient.toString(),
-          amountOutMin.quotient.toString(),
-          path,
-          to,
-          deadline,
-        );
+      } else if (tokenPair[1].address === DEFAULT_NATIVE_ADDRESS) {
+        tx = await router.swapExactTokensForETH(amountIn.toString(), amountOutMin.toString(), path, to, deadline);
       } else {
-        tx = await router.swapExactTokensForTokens(
-          trade.inputAmount.quotient.toString(),
-          amountOutMin.quotient.toString(),
-          path,
-          to,
-          deadline,
-        );
+        tx = await router.swapExactTokensForTokens(amountIn.toString(), amountOutMin.toString(), path, to, deadline);
       }
 
       await tx.wait();
@@ -222,6 +239,9 @@ const SwapCard: React.FC = () => {
       setInputValues(['', '']);
     } catch (error) {
       console.error('Swap failed:', error);
+      setError('Swap failed. Please try again.');
+    } finally {
+      setIsSwapping(false);
     }
   };
 
@@ -251,6 +271,7 @@ const SwapCard: React.FC = () => {
       const validTokens = filteredTokens.slice(0, 2);
       return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
     });
+    setError(null);
   }, [address, networkChainId, filteredTokens]);
 
   if (filteredTokens.length < 2) {
@@ -276,11 +297,7 @@ const SwapCard: React.FC = () => {
                     <Input
                       id={`token-input-${index}`}
                       type="number"
-                      value={
-                        index === 0
-                          ? inputValues[index]
-                          : Number(inputValues[index]).toFixed(tokenPair[1]?.decimals || 6)
-                      }
+                      value={inputValues[index]}
                       onChange={(e) => (index === 0 ? handleInputChange(e.target.value) : undefined)}
                       readOnly={index === 1}
                       className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-grow bg-black bg-opacity-10"
@@ -331,11 +348,13 @@ const SwapCard: React.FC = () => {
             className="appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none flex-grow bg-black bg-opacity-10"
           />
         </div>
+        {error && <div className="mt-4 text-red-500">{error}</div>}
         <Button
           className="mt-8 w-full text-center justify-center font-chakra text-xl bg-syntax/75 hover:bg-syntax"
           onClick={handleSwap}
+          disabled={isSwapping || !!error}
         >
-          Swap
+          {isSwapping ? 'Swapping...' : 'Swap'}
         </Button>
       </CardContent>
     </Card>

@@ -4,7 +4,7 @@ const Header = () => {
   return (
     <nav className="py-4 flex justify-between items-center z-10">
       <a href="/">
-        <img src="/spectral.svg" alt="spectral logo" className="w-32 md:w-full" />
+        <img src="/spectral.svg" alt="spectral logo" className="w-32 md:w-full -ml-4 sm:ml-0" />
       </a>
 
       <ConnectButton label="Connect" />
