@@ -29,9 +29,8 @@ import {
   ExtendedToken,
   DEFAULT_NATIVE_ADDRESS,
   WRAPPED_NATIVE_TOKEN,
+  MAX_INPUT_LENGTH,
 } from '../constants';
-
-const MAX_INPUT_LENGTH = 25;
 
 const SwapCard: React.FC = () => {
   const { address, chainId } = useAccount();
@@ -41,6 +40,7 @@ const SwapCard: React.FC = () => {
   const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
   const [isSwapping, setIsSwapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentBalance, setCurrentBalance] = useState<string>('0');
 
   const filteredTokens = useMemo(() => {
     return tokenList.filter((token) => token.chainId === networkChainId).map(createToken);
@@ -60,7 +60,11 @@ const SwapCard: React.FC = () => {
     chainId: networkChainId,
   });
 
-  const maxBalance = tokenBalance.data?.formatted ? Number(tokenBalance.data.formatted) : 0;
+  useEffect(() => {
+    if (tokenBalance.data?.formatted) {
+      setCurrentBalance(tokenBalance.data.formatted);
+    }
+  }, [tokenBalance.data]);
 
   useEffect(() => {
     const initProvider = async () => {
@@ -146,8 +150,8 @@ const SwapCard: React.FC = () => {
     async (value: string) => {
       let newValue = value.slice(0, MAX_INPUT_LENGTH);
       const numValue = Number(newValue);
-      if (numValue > maxBalance) {
-        newValue = maxBalance.toString();
+      if (numValue > Number(currentBalance)) {
+        newValue = currentBalance;
       }
       setInputValues((prev) => [newValue, prev[1]]);
 
@@ -160,12 +164,12 @@ const SwapCard: React.FC = () => {
         setInputValues([newValue, '']);
       }
     },
-    [maxBalance, tokenPair, calculateTrade],
+    [currentBalance, tokenPair, calculateTrade],
   );
 
   const handleMaxClick = useCallback(() => {
-    handleInputChange(maxBalance.toString());
-  }, [handleInputChange, maxBalance]);
+    handleInputChange(currentBalance);
+  }, [handleInputChange, currentBalance]);
 
   const setToken = (index: 0 | 1, newToken: ExtendedToken) => {
     setTokenPair((prevPair) => {
@@ -181,6 +185,30 @@ const SwapCard: React.FC = () => {
     setInputValues(['', '']);
     setError(null);
   };
+
+  const updateBalance = useCallback(async () => {
+    if (!address || !tokenPair[0] || !provider) return;
+
+    try {
+      let balance;
+      if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
+        balance = await provider.getBalance(address);
+      } else {
+        const tokenContract = new ethers.Contract(
+          tokenPair[0].address,
+          ['function balanceOf(address account) view returns (uint256)'],
+          provider,
+        );
+        balance = await tokenContract.balanceOf(address);
+      }
+
+      const formattedBalance = ethers.utils.formatUnits(balance, tokenPair[0].decimals);
+      console.log('Updated balance:', formattedBalance);
+      setCurrentBalance(formattedBalance);
+    } catch (error) {
+      console.error('Failed to update balance:', error);
+    }
+  }, [address, tokenPair, provider]);
 
   const handleSwap = async () => {
     if (!tokenPair[0] || !tokenPair[1] || !inputValues[0] || isSwapping) return;
@@ -214,32 +242,72 @@ const SwapCard: React.FC = () => {
 
       const slippageAmount = amountOut.mul(slippageNumerator).div(slippageDenominator);
       const amountOutMin = amountOut.sub(slippageAmount);
+      const finalAmountOutMin = amountOutMin.lt(0) ? ethers.constants.Zero : amountOutMin;
 
       console.log(`Amount In: ${ethers.utils.formatUnits(amountIn, tokenPair[0].decimals)}`);
       console.log(`Amount Out: ${ethers.utils.formatUnits(amountOut, tokenPair[1].decimals)}`);
       console.log(`Amount Out Min: ${ethers.utils.formatUnits(amountOutMin, tokenPair[1].decimals)}`);
+      console.log(`Final Amount Out Min: ${ethers.utils.formatUnits(finalAmountOutMin, tokenPair[1].decimals)}`);
 
-      const path = [tokenPair[0].address, tokenPair[1].address];
+      const wethAddress = getWETHAddress(networkChainId);
+      let path;
+      if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
+        path = [wethAddress, tokenPair[1].address];
+      } else if (tokenPair[1].address === DEFAULT_NATIVE_ADDRESS) {
+        path = [tokenPair[0].address, wethAddress];
+      } else {
+        path = [tokenPair[0].address, wethAddress, tokenPair[1].address];
+      }
+
+      console.log('Swap path:', path);
+
       const to = await ethersSigner.getAddress();
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
+      if (tokenPair[0].address !== DEFAULT_NATIVE_ADDRESS) {
+        const tokenContract = new ethers.Contract(
+          tokenPair[0].address,
+          ['function approve(address spender, uint256 amount) external returns (bool)'],
+          ethersSigner,
+        );
+
+        console.log('Approving token spend...');
+        try {
+          const approveTx = await tokenContract.approve(routerAddress, amountIn.toString());
+          await approveTx.wait();
+          console.log('Approval successful');
+        } catch (approvalError) {
+          console.error('Approval failed:', approvalError);
+          throw new Error('Failed to approve token spend. Please try again.');
+        }
+      }
+
       let tx;
       if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
-        tx = await router.swapExactETHForTokens(amountOutMin.toString(), path, to, deadline, {
+        tx = await router.swapExactETHForTokens(finalAmountOutMin.toString(), path, to, deadline, {
           value: amountIn.toString(),
         });
       } else if (tokenPair[1].address === DEFAULT_NATIVE_ADDRESS) {
-        tx = await router.swapExactTokensForETH(amountIn.toString(), amountOutMin.toString(), path, to, deadline);
+        tx = await router.swapExactTokensForETH(amountIn.toString(), finalAmountOutMin.toString(), path, to, deadline);
       } else {
-        tx = await router.swapExactTokensForTokens(amountIn.toString(), amountOutMin.toString(), path, to, deadline);
+        tx = await router.swapExactTokensForTokens(
+          amountIn.toString(),
+          finalAmountOutMin.toString(),
+          path,
+          to,
+          deadline,
+        );
       }
 
+      console.log('Swap transaction sent:', tx.hash);
       await tx.wait();
       console.log('Swap successful!');
       setInputValues(['', '']);
+
+      await updateBalance();
     } catch (error) {
       console.error('Swap failed:', error);
-      setError('Swap failed. Please try again.');
+      setError(`Swap failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
     } finally {
       setIsSwapping(false);
     }
@@ -272,6 +340,7 @@ const SwapCard: React.FC = () => {
       return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
     });
     setError(null);
+    updateBalance();
   }, [address, networkChainId, filteredTokens]);
 
   if (filteredTokens.length < 2) {
@@ -279,7 +348,7 @@ const SwapCard: React.FC = () => {
   }
 
   return (
-    <Card className="w-full md:w-1/2 bg-black bg-opacity-25 border-black/80">
+    <Card className="w-full sm:w-3/4 bg-black bg-opacity-25 border-black/80">
       <CardContent className="p-8">
         <div className="flex flex-col gap-8">
           {[0, 1].map((index) => (
@@ -339,7 +408,7 @@ const SwapCard: React.FC = () => {
           ))}
         </div>
         <div className="flex flex-col gap-2 mt-8">
-          <Label htmlFor="slippage">Slippage tolerance: </Label>
+          <Label htmlFor="slippage">Slippage tolerance %: </Label>
           <Input
             type="number"
             placeholder="Slippage (%)"
