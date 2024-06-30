@@ -1,15 +1,20 @@
 # Swapper
 
+## Hosted on Vercel
+
+- [Swapper](https://spectralswap.vercel.app/)
+
 ## Tokens for testing
 
-- USDC - url[https://staging.aave.com/faucet/](Aave)
-- ETH - url[https://www.infura.io/faucet/sepolia](Infura), url[https://learnweb3.io/faucets/sepolia/](LearnWeb3) or [https://cloud.google.com/application/web3/faucet/ethereum/sepolia](Google)
+- USDC - [Aave](https://staging.aave.com/faucet/)
+- ETH - [Infura](https://www.infura.io/faucet/sepolia)), [LearnWeb3](https://learnweb3.io/faucets/sepolia/) or [Google Web3 Cloud](https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
 
 ## Setup
 
 - Run a docker daemon for `Makefile` to work
 - `make build` to build and
 - `make run` to run the app
+- [Local Docker](http://localhost:8080) for app
 - `make stop` to stop the app
 - `make clean` to remove the app
 
@@ -19,6 +24,7 @@ Swapper is a simple tool for swapping tokens on the Ethereum blockchain. It is b
 
 ## TODO
 
+- Refactor swap-card.tsx for modularity
 - Toasts for success and error messages
 - Start with USDC
 - Switch Sepolia to Goerli? because of liquidity pairs

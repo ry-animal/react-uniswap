@@ -5,7 +5,12 @@ const Footer = () => {
     <div className="flex fixed bottom-4 left-1/2 -translate-x-1/2 w-full justify-between font-chakra text-xs md:text-sm">
       <span className="flex ml-8 gap-1">
         <span>created by</span>
-        <a href="https://github.com/ry-animal" className="flex gap-1" target="_blank" rel="noreferrer noopenner">
+        <a
+          href="https://github.com/ry-animal/react-uniswap"
+          className="flex gap-1"
+          target="_blank"
+          rel="noreferrer noopenner"
+        >
           ry-animal
           <Github size={16} className="inline-block mb-2" />
         </a>
