@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   build: {
-    assetsInlineLimit: 0,
+    assetsInlineLimit: 0, // This ensures that all assets are processed as files
     rollupOptions: {
       output: {
         assetFileNames: (assetInfo) => {
