@@ -8,7 +8,7 @@ Swapper is a simple tool for swapping tokens on the Ethereum blockchain. It is b
 
 - [Swapper](https://spectralswap.vercel.app/)
 
-## Tokens for testing (No Liquidity Pairs on Sepolia right now)
+## Tokens for testing (No Liquidity Pairs on Sepolia right now, but mainnet works as expected.)
 
 - USDC - [Aave](https://staging.aave.com/faucet/)
 - ETH - [Infura](https://www.infura.io/faucet/sepolia), [LearnWeb3](https://learnweb3.io/faucets/sepolia/) or [Google Web3 Cloud](https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
