@@ -13,7 +13,6 @@
       "version": "detect",
     },
     "import/resolver": {
-      "typescript": {},
       "node": {
         "paths": ["src"],
         "extensions": [".js", ".jsx", ".ts", ".tsx"],
@@ -30,7 +29,6 @@
         "argsIgnorePattern": "^_",
       },
     ],
-    "import/no-unresolved": ["error", { "caseSensitive": false }],
     "react/react-in-jsx-scope": "off",
   },
 }
