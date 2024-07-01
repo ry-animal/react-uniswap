@@ -17,7 +17,7 @@ export type CustomToken = {
 export const MAINNET_CHAIN_ID = 1;
 export const SEPOLIA_CHAIN_ID = 11155111;
 
-export const DEFAULT_NATIVE_ADDRESS = ethers.constants.AddressZero;
+export const DEFAULT_NATIVE_ADDRESS = ethers?.constants?.AddressZero ?? '0x0000000000000000000000000000000000000000';
 
 const INFURA_API_KEY = '11c2e756461a4c9aae945e4a2fe66a4d';
 

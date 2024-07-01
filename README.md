@@ -29,10 +29,10 @@ Swapper is a simple tool for swapping tokens on the Ethereum blockchain. It is b
 [x] Start with USDC
 [] Switch Sepolia to Goerli? because of liquidity pairs
 [x] Check approvals before prompting for approval signature
-[] Add gas indicator
-[] Add current token prices
+[x] Add gas indicator
+[x] Add current token prices
 [] Add more tokens
-[] Add more tests
+[x] Add more tests
 [x] Add more error handling
 [x] Add more documentation
 [] Add more chains

@@ -16,7 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { CoinsIcon } from 'lucide-react';
+import { CoinsIcon, GlassWater } from 'lucide-react';
 import { formatBalance } from '../lib/utils';
 import {
   SEPOLIA_CHAIN_ID,
@@ -30,19 +30,26 @@ import {
   DEFAULT_NATIVE_ADDRESS,
   WRAPPED_NATIVE_TOKEN,
   MAX_INPUT_LENGTH,
+  MAINNET_ETH,
 } from '../constants';
 import { useToast } from '../components/ui/use-toast';
 
 const SwapCard: React.FC = () => {
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const networkChainId = chainId ?? SEPOLIA_CHAIN_ID;
   const { toast } = useToast();
+
+  const [feeData, setFeeData] = useState<{
+    gasPrice: string;
+  } | null>(null);
+  const [ethPrice, setEthPrice] = useState<number | null>(null);
 
   const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
   const [isSwapping, setIsSwapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentBalance, setCurrentBalance] = useState<string>('0');
+
+  const networkChainId = chainId ?? SEPOLIA_CHAIN_ID;
 
   const filteredTokens = useMemo(() => {
     return tokenList.filter((token) => token.chainId === networkChainId).map(createToken);
@@ -416,12 +423,58 @@ const SwapCard: React.FC = () => {
     updateBalance();
   }, [address, networkChainId, filteredTokens]);
 
+  const getFeeData = useCallback(async () => {
+    if (!provider) return;
+    try {
+      const data = await provider.getFeeData();
+      setFeeData({
+        gasPrice: ethers.utils.formatUnits(data.gasPrice || 0, 'gwei'),
+      });
+    } catch (error) {
+      console.error('Error fetching fee data:', error);
+    }
+  }, [provider]);
+
+  const getEthPrice = useCallback(async () => {
+    try {
+      const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+      const data = await response.json();
+      setEthPrice(data.ethereum.usd);
+    } catch (error) {
+      console.error('Error fetching ETH price:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    getFeeData();
+    getEthPrice();
+    const interval = setInterval(() => {
+      getFeeData();
+      getEthPrice();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [getFeeData, getEthPrice]);
+
   if (filteredTokens.length < 2) {
     return <div>Loading tokens... (Found {filteredTokens.length} tokens)</div>;
   }
 
   return (
     <Card className="w-full sm:w-3/4 bg-black bg-opacity-25 border-black/80">
+      <div className="flex justify-between items-center text-xs text-gray-300 p-4">
+        {ethPrice && (
+          <div className="flex items-center gap-1">
+            <img src={MAINNET_ETH.logoURI} alt="eth logo" className="size-4" />
+            <div>ETH Price: ${ethPrice.toFixed(2)}</div>
+          </div>
+        )}
+        {feeData && (
+          <div className="flex items-center gap-1">
+            <GlassWater className="size-4" />
+            <div>Gas: {parseFloat(feeData.gasPrice).toFixed(2)} gwei</div>
+          </div>
+        )}
+      </div>
       <CardContent className="p-8">
         <div className="flex flex-col gap-8">
           {[0, 1].map((index) => (
