@@ -4,11 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "vitest",
-    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview",
     "dev": "vite",
-    "build": "tsc && vite build"
+    "tsc": "tsc -b",
+    "test": "vitest",
+    "vite-build": "vite build",
+    "build": "npm run tsc && npm run vite-build",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.6.0",
