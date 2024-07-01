@@ -61,7 +61,7 @@ const SwapCard: React.FC = () => {
 
   const [tokenPair, setTokenPair] = useState<[ExtendedToken | null, ExtendedToken | null]>(() => {
     const usdcToken = findUSDCToken(filteredTokens);
-    const otherToken = filteredTokens.find((token) => token.address === DEFAULT_NATIVE_ADDRESS); // This will be ETH/native token
+    const otherToken = filteredTokens.find((token) => token.address === DEFAULT_NATIVE_ADDRESS);
 
     if (usdcToken && otherToken) {
       return [usdcToken, otherToken];
@@ -222,6 +222,8 @@ const SwapCard: React.FC = () => {
     });
     setInputValues(['', '']);
     setError(null);
+    setCurrentBalance('0');
+    updateBalance();
   };
 
   const updateBalance = useCallback(async () => {
@@ -245,6 +247,7 @@ const SwapCard: React.FC = () => {
       setCurrentBalance(formattedBalance);
     } catch (error) {
       console.error('Failed to update balance:', error);
+      setCurrentBalance('0');
     }
   }, [address, tokenPair, provider]);
 
@@ -387,6 +390,10 @@ const SwapCard: React.FC = () => {
   };
 
   useEffect(() => {
+    updateBalance();
+  }, [tokenPair, updateBalance]);
+
+  useEffect(() => {
     const updateConversion = async () => {
       if (tokenPair[0] && tokenPair[1] && inputValues[0]) {
         const result = await calculateTrade(inputValues[0]);
@@ -420,8 +427,9 @@ const SwapCard: React.FC = () => {
       }
     });
     setError(null);
+    setCurrentBalance('0');
     updateBalance();
-  }, [address, networkChainId, filteredTokens]);
+  }, [address, networkChainId, filteredTokens, updateBalance]);
 
   const getFeeData = useCallback(async () => {
     if (!provider) return;
@@ -437,7 +445,7 @@ const SwapCard: React.FC = () => {
 
   const getEthPrice = useCallback(async () => {
     try {
-      const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+      const response = await fetch('https
       const data = await response.json();
       setEthPrice(data.ethereum.usd);
     } catch (error) {
