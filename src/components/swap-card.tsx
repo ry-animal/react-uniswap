@@ -31,11 +31,13 @@ import {
   WRAPPED_NATIVE_TOKEN,
   MAX_INPUT_LENGTH,
 } from '../constants';
+import { useToast } from '../components/ui/use-toast';
 
 const SwapCard: React.FC = () => {
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const networkChainId = chainId ?? SEPOLIA_CHAIN_ID;
+  const { toast } = useToast();
 
   const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
   const [isSwapping, setIsSwapping] = useState(false);
@@ -46,9 +48,20 @@ const SwapCard: React.FC = () => {
     return tokenList.filter((token) => token.chainId === networkChainId).map(createToken);
   }, [networkChainId]);
 
+  const findUSDCToken = (tokens: ExtendedToken[]): ExtendedToken | undefined => {
+    return tokens.find((token) => token.symbol === 'USDC');
+  };
+
   const [tokenPair, setTokenPair] = useState<[ExtendedToken | null, ExtendedToken | null]>(() => {
-    const validTokens = filteredTokens.slice(0, 2);
-    return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
+    const usdcToken = findUSDCToken(filteredTokens);
+    const otherToken = filteredTokens.find((token) => token.address === DEFAULT_NATIVE_ADDRESS); // This will be ETH/native token
+
+    if (usdcToken && otherToken) {
+      return [usdcToken, otherToken];
+    } else {
+      const validTokens = filteredTokens.slice(0, 2);
+      return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
+    }
   });
 
   const [inputValues, setInputValues] = useState<[string, string]>(['', '']);
@@ -84,6 +97,24 @@ const SwapCard: React.FC = () => {
       default:
         throw new Error(`Unsupported chain ID: ${chainId}`);
     }
+  };
+
+  const checkAllowance = async (
+    tokenAddress: string,
+    ownerAddress: string,
+    spenderAddress: string,
+    amount: ethers.BigNumber,
+  ) => {
+    if (!provider) throw new Error('Provider not initialized');
+
+    const tokenContract = new ethers.Contract(
+      tokenAddress,
+      ['function allowance(address owner, address spender) view returns (uint256)'],
+      provider,
+    );
+
+    const allowance = await tokenContract.allowance(ownerAddress, spenderAddress);
+    return allowance.gte(amount);
   };
 
   const calculateTrade = useCallback(
@@ -244,11 +275,6 @@ const SwapCard: React.FC = () => {
       const amountOutMin = amountOut.sub(slippageAmount);
       const finalAmountOutMin = amountOutMin.lt(0) ? ethers.constants.Zero : amountOutMin;
 
-      console.log(`Amount In: ${ethers.utils.formatUnits(amountIn, tokenPair[0].decimals)}`);
-      console.log(`Amount Out: ${ethers.utils.formatUnits(amountOut, tokenPair[1].decimals)}`);
-      console.log(`Amount Out Min: ${ethers.utils.formatUnits(amountOutMin, tokenPair[1].decimals)}`);
-      console.log(`Final Amount Out Min: ${ethers.utils.formatUnits(finalAmountOutMin, tokenPair[1].decimals)}`);
-
       const wethAddress = getWETHAddress(networkChainId);
       let path;
       if (tokenPair[0].address === DEFAULT_NATIVE_ADDRESS) {
@@ -271,14 +297,40 @@ const SwapCard: React.FC = () => {
           ethersSigner,
         );
 
-        console.log('Approving token spend...');
-        try {
-          const approveTx = await tokenContract.approve(routerAddress, amountIn.toString());
-          await approveTx.wait();
-          console.log('Approval successful');
-        } catch (approvalError) {
-          console.error('Approval failed:', approvalError);
-          throw new Error('Failed to approve token spend. Please try again.');
+        const hasAllowance = await checkAllowance(
+          tokenPair[0].address,
+          await ethersSigner.getAddress(),
+          routerAddress,
+          amountIn,
+        );
+
+        if (!hasAllowance) {
+          console.log('Approving token spend...');
+          try {
+            const approveTx = await tokenContract.approve(routerAddress, amountIn.toString());
+            await approveTx.wait();
+            console.log('Approval successful');
+
+            toast({
+              title: 'Approval Successful',
+              description: `Approved ${tokenPair[0].symbol} for swapping`,
+              variant: 'default',
+              className: 'bg-syntax/75',
+            });
+          } catch (approvalError) {
+            console.error('Approval failed:', approvalError);
+
+            toast({
+              title: 'Approval Failed',
+              description: approvalError instanceof Error ? approvalError.message : 'Unknown error',
+              variant: 'destructive',
+              className: 'bg-red-500/75',
+            });
+
+            throw new Error('Failed to approve token spend. Please try again.');
+          }
+        } else {
+          console.log('Token already approved');
         }
       }
 
@@ -305,9 +357,23 @@ const SwapCard: React.FC = () => {
       setInputValues(['', '']);
 
       await updateBalance();
+
+      toast({
+        title: 'Swap Successful',
+        description: `Swapped ${inputValues[0]} ${tokenPair[0].symbol} for ${result.formattedOutput} ${tokenPair[1].symbol}`,
+        variant: 'default',
+        className: 'bg-syntax/75',
+      });
     } catch (error) {
       console.error('Swap failed:', error);
       setError(`Swap failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`);
+
+      toast({
+        title: 'Swap Failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+        className: 'bg-red-500/75',
+      });
     } finally {
       setIsSwapping(false);
     }
@@ -336,8 +402,15 @@ const SwapCard: React.FC = () => {
   useEffect(() => {
     setInputValues(['', '']);
     setTokenPair(() => {
-      const validTokens = filteredTokens.slice(0, 2);
-      return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
+      const usdcToken = findUSDCToken(filteredTokens);
+      const otherToken = filteredTokens.find((token) => token.address === DEFAULT_NATIVE_ADDRESS);
+
+      if (usdcToken && otherToken) {
+        return [usdcToken, otherToken];
+      } else {
+        const validTokens = filteredTokens.slice(0, 2);
+        return validTokens.length === 2 ? [validTokens[0], validTokens[1]] : [null, null];
+      }
     });
     setError(null);
     updateBalance();
