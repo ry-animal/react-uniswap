@@ -30,7 +30,7 @@
         "argsIgnorePattern": "^_",
       },
     ],
+    "import/no-unresolved": ["error", { "caseSensitive": false }],
     "react/react-in-jsx-scope": "off",
-    "import/no-unresolved": "error",
   },
 }

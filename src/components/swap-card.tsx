@@ -32,7 +32,7 @@ import {
   MAX_INPUT_LENGTH,
   MAINNET_ETH,
 } from '../constants';
-import { useToast } from '../components/ui/use-toast';
+import { useToast } from './ui/use-toast';
 
 const SwapCard: React.FC = () => {
   const { address, chainId } = useAccount();
