@@ -47,15 +47,15 @@ Swapper is a simple tool for swapping tokens on the Ethereum blockchain. It is b
 
 ## TODO
 
-[x] Toasts for success and error messages
-[x] Start with USDC
-[x] Check approvals before prompting for approval signature
-[x] Add gas indicator
-[x] Add current token prices
-[x] Add more tests
-[x] Add more error handling
-[x] Add more documentation
-[] Deploy liquidity pool to Sepolia? because of no liquidity pairs?
-[] Refactor swap-card.tsx for modularity / readability
-[] Add more tokens
-[] Add more chains
+- [x] Toasts for success and error messages
+- [x] Start with USDC
+- [x] Check approvals before prompting for approval signature
+- [x] Add gas indicator
+- [x] Add current token prices
+- [x] Add more tests
+- [x] Add more error handling
+- [x] Add more documentation
+- [] Deploy liquidity pool to Sepolia? because of no liquidity pairs?
+- [] Refactor swap-card.tsx for modularity / readability
+- [] Add more tokens
+- [] Add more chains
